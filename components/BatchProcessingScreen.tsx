@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import JSZip from 'jszip';
-import { generateFilteredImage, generateAdjustedImage } from '../services/geminiService';
+import { generateFilteredImage, generateAdjustedImage, generateStyleTransferImage } from '../services/geminiService';
 import BatchItem from './BatchItem';
-import { DownloadZipIcon } from './icons';
+import { DownloadZipIcon, UploadIcon, RetryIcon } from './icons';
 import Spinner from './Spinner';
 
 interface BatchProcessingScreenProps {
@@ -19,7 +19,8 @@ export interface BatchItem {
     id: string;
     originalFile: File;
     processedUrl?: string;
-    status: 'pending' | 'processing' | 'complete';
+    status: 'pending' | 'processing' | 'complete' | 'error';
+    errorMessage?: string;
 }
 
 /**
@@ -79,6 +80,29 @@ const BatchProcessingScreen: React.FC<BatchProcessingScreenProps> = ({ files, on
     const [hasStartedProcessing, setHasStartedProcessing] = useState(false);
     const isCancelledRef = useRef(false);
 
+    // New states for style transfer mode
+    const [batchMode, setBatchMode] = useState<'effect' | 'style'>('effect');
+    const [styleFile, setStyleFile] = useState<File | null>(null);
+    const [stylePreviewUrl, setStylePreviewUrl] = useState<string | null>(null);
+    const [isDraggingOver, setIsDraggingOver] = useState(false);
+    const [styleError, setStyleError] = useState<string | null>(null);
+    const [stylePrompt, setStylePrompt] = useState('');
+    
+    useEffect(() => {
+        let objectUrl: string | null = null;
+        if (styleFile) {
+          objectUrl = URL.createObjectURL(styleFile);
+          setStylePreviewUrl(objectUrl);
+          return () => {
+            if (objectUrl) {
+              URL.revokeObjectURL(objectUrl);
+            }
+          };
+        } else {
+          setStylePreviewUrl(null);
+        }
+    }, [styleFile]);
+
     const handlePresetClick = (preset: (typeof presets)[number]) => {
         setSelectedPreset(preset);
         setCustomPrompt('');
@@ -89,65 +113,66 @@ const BatchProcessingScreen: React.FC<BatchProcessingScreenProps> = ({ files, on
         setSelectedPreset(null);
     };
 
-    const handleCancelProcessing = () => {
-        isCancelledRef.current = true;
-    };
-
-    const handleStartProcessing = useCallback(async () => {
-        const activePrompt = customPrompt.trim() || selectedPreset?.prompt;
-        if (!activePrompt) return;
+    const handleStartProcessing = useCallback(async (itemsToProcess: BatchItem[]) => {
+        const canStartEffect = batchMode === 'effect' && (customPrompt.trim() || selectedPreset?.prompt);
+        const canStartStyle = batchMode === 'style' && styleFile;
+        if ((!canStartEffect && !canStartStyle) || itemsToProcess.length === 0) return;
 
         setHasStartedProcessing(true);
         isCancelledRef.current = false;
         setIsProcessing(true);
-        setProcessedCount(0);
 
-        for (const item of batchItems) {
-            if (isCancelledRef.current) {
-                console.log("Batch processing cancelled by user.");
-                break;
-            }
+        const isInitialRun = itemsToProcess.length === batchItems.length && itemsToProcess.every(item => item.status !== 'complete');
+        if (isInitialRun) {
+            setProcessedCount(0);
+        }
+
+        setBatchItems(prev => prev.map(i => itemsToProcess.find(p => p.id === i.id) ? { ...i, status: 'pending', errorMessage: undefined } : i));
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        for (const item of itemsToProcess) {
+            if (isCancelledRef.current) break;
 
             setBatchItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'processing' } : i));
             try {
                 const apiCall = () => {
-                    if (customPrompt.trim()) {
-                        // Custom prompts use the general-purpose 'adjustment' function
-                        return generateAdjustedImage(item.originalFile, activePrompt);
-                    } else if (selectedPreset) {
-                        const call = selectedPreset.type === 'adjustment'
-                            ? generateAdjustedImage(item.originalFile, selectedPreset.prompt)
-                            : generateFilteredImage(item.originalFile, selectedPreset.prompt);
-                        return call;
-                    } else {
-                         // This should not be reached if button logic is correct, but as a safeguard:
-                        return Promise.reject(new Error("No prompt or preset selected."));
+                    if (batchMode === 'effect') {
+                        const activePrompt = customPrompt.trim() || selectedPreset?.prompt;
+                        if (customPrompt.trim()) return generateAdjustedImage(item.originalFile, activePrompt!);
+                        if (selectedPreset) return selectedPreset.type === 'adjustment' ? generateAdjustedImage(item.originalFile, selectedPreset.prompt) : generateFilteredImage(item.originalFile, selectedPreset.prompt);
+                    } else if (batchMode === 'style') {
+                        return generateStyleTransferImage(item.originalFile, styleFile!, stylePrompt);
                     }
+                    return Promise.reject(new Error("Invalid processing mode or missing inputs."));
                 };
-
                 const resultUrl = await withRetry(apiCall);
                 
                 if (isCancelledRef.current) break;
                 setBatchItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'complete', processedUrl: resultUrl } : i));
-
             } catch (err) {
                 if (isCancelledRef.current) break;
                 const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-                console.error(`Failed to process ${item.originalFile.name} after all retries:`, err);
-                // On error, remove the item from the display to allow the process to continue.
-                setBatchItems(prev => prev.filter(i => i.id !== item.id));
+                console.error(`Failed to process ${item.originalFile.name}:`, err);
+                setBatchItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'error', errorMessage } : i));
             }
-            setProcessedCount(prev => prev + 1);
+             if (!isCancelledRef.current) {
+                setProcessedCount(prev => prev + 1);
+            }
         }
-
         setIsProcessing(false);
-        if (isCancelledRef.current) {
-            // Revert status for any items that were stuck in 'processing'
-            setBatchItems(prev => prev.map(item =>
-                item.status === 'processing' ? { ...item, status: 'pending' } : item
-            ));
-        }
-    }, [selectedPreset, customPrompt, batchItems]);
+    }, [selectedPreset, customPrompt, batchItems, batchMode, styleFile, stylePrompt]);
+
+    const handleCancelProcessing = () => {
+        isCancelledRef.current = true;
+        setBatchItems(prev => prev.map(item =>
+            item.status === 'processing' ? { ...item, status: 'pending' } : item
+        ));
+    };
+
+    const handleRetryFailed = () => {
+        const failedItems = batchItems.filter(item => item.status === 'error');
+        handleStartProcessing(failedItems);
+    }
     
     const handleDownloadAll = async () => {
         const completedItems = batchItems.filter(item => item.status === 'complete' && item.processedUrl);
@@ -186,110 +211,173 @@ const BatchProcessingScreen: React.FC<BatchProcessingScreenProps> = ({ files, on
         }
     };
 
-    const totalCompleted = batchItems.filter(i => i.status === 'complete').length;
-    const isFullyComplete = totalCompleted > 0 && totalCompleted === files.length;
-    const canStart = (!!selectedPreset || customPrompt.trim() !== '') && !isProcessing;
-
-    const renderResults = () => {
-        if (!hasStartedProcessing || isProcessing) return null;
-
-        if (isFullyComplete) {
-            return (
-                <div className="w-full p-6 border-2 border-dashed border-green-300 rounded-lg bg-green-50/50 flex flex-col items-center gap-4 text-center">
-                    <h3 className="text-2xl font-bold text-green-800">Batch Processing Complete!</h3>
-                    <p className="text-green-700">Images that failed to process have been removed. You can download your successful edits below.</p>
-                    {renderActionButtons()}
-                </div>
-            );
+    const handleStyleFileSelect = (files: FileList | null) => {
+        if (!files || files.length === 0) return;
+        const file = files[0];
+        const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+        
+        if (allowedTypes.includes(file.type)) {
+          setStyleFile(file);
+          setStyleError(null);
         } else {
-             return (
-                <div className="w-full p-6 border-2 border-dashed border-amber-400 rounded-lg bg-amber-900/20 flex flex-col items-center gap-4 text-center">
-                    <h3 className="text-2xl font-bold text-amber-200">Batch Processing Stopped</h3>
-                    <p className="text-amber-300">The process was stopped. {totalCompleted} images were successfully processed and are available for download.</p>
-                    {renderActionButtons()}
+          setStyleError(`Unsupported file type. Please use JPG, PNG, GIF, or WEBP.`);
+          setStyleFile(null);
+        }
+    };
+
+    const totalCompleted = batchItems.filter(i => i.status === 'complete').length;
+    const totalFailed = batchItems.filter(i => i.status === 'error').length;
+    const totalPending = batchItems.filter(i => i.status === 'pending' || i.status === 'processing').length;
+    const totalImages = batchItems.length;
+
+    const isFullyComplete = !isProcessing && hasStartedProcessing && totalPending === 0;
+    const canStart = !isProcessing && (
+        (batchMode === 'effect' && (!!selectedPreset || customPrompt.trim() !== '')) ||
+        (batchMode === 'style' && !!styleFile)
+    );
+    
+    const renderStyleUploader = () => {
+        if (styleError) {
+            return (
+                <div className="w-full max-w-lg h-48 flex flex-col items-center justify-center border-2 border-dashed rounded-lg bg-red-100/50 border-red-300 text-center p-4">
+                    <p className="text-sm font-semibold text-red-700">Error</p>
+                    <p className="text-xs text-red-600 mt-1">{styleError}</p>
+                    <button onClick={() => setStyleError(null)} className="mt-4 bg-red-500 text-white text-xs font-bold py-1 px-3 rounded-md hover:bg-red-600 transition-colors">
+                        Try Again
+                    </button>
                 </div>
             );
         }
-    }
-
-    const renderActionButtons = () => (
-        <div className="flex flex-col sm:flex-row items-center gap-4 mt-2">
-            <button
-                onClick={handleDownloadAll}
-                disabled={isZipping || totalCompleted === 0}
-                className="w-full sm:w-auto flex items-center justify-center gap-3 bg-gradient-to-br from-purple-600 to-fuchsia-500 text-white font-bold py-3 px-8 text-base rounded-lg transition-all duration-300 ease-in-out shadow-lg shadow-purple-500/30 hover:shadow-xl hover:shadow-purple-500/50 hover:-translate-y-px active:scale-95 active:shadow-inner disabled:from-purple-400 disabled:to-fuchsia-300 disabled:shadow-none disabled:cursor-not-allowed disabled:transform-none"
-            >
-                {isZipping ? (
-                    <>
-                        <Spinner /> Zipping...
-                    </>
-                ) : (
-                    <>
-                        <DownloadZipIcon className="w-5 h-5" />
-                        Download All as ZIP
-                    </>
-                )}
-            </button>
-            <button 
-                onClick={onExit}
-                className="text-center bg-gray-800 border border-gray-700 text-gray-300 font-semibold py-2 px-4 rounded-lg transition-all duration-200 ease-in-out hover:bg-gray-700 active:scale-95 text-sm"
-            >
-                Start Over
-            </button>
-        </div>
-    );
+    
+        if (stylePreviewUrl) {
+            return (
+                <div className="w-full flex flex-col items-center gap-4 animate-fade-in">
+                    <p className="text-lg font-semibold text-gray-200">1. Selected Style Image</p>
+                    <div className="relative group">
+                        <img src={stylePreviewUrl} alt="Style preview" className="h-40 w-auto rounded-lg shadow-md" />
+                        <button
+                            onClick={() => setStyleFile(null)}
+                            className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full h-6 w-6 flex items-center justify-center text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity"
+                            aria-label="Remove style image"
+                        >
+                            &times;
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+    
+        return (
+            <div className="w-full flex flex-col items-center gap-4">
+                <label className="text-lg font-semibold text-gray-200">1. Upload a Style Image</label>
+                <label
+                    htmlFor="style-image-upload"
+                    onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(true); }}
+                    onDragLeave={() => setIsDraggingOver(false)}
+                    onDrop={(e) => {
+                        e.preventDefault();
+                        setIsDraggingOver(false);
+                        handleStyleFileSelect(e.dataTransfer.files);
+                    }}
+                    className={`w-full max-w-lg h-48 flex flex-col items-center justify-center border-2 border-dashed rounded-lg cursor-pointer transition-all duration-300 ${isDraggingOver ? 'border-purple-500 bg-gray-800 ring-2 ring-purple-500 ring-offset-2 ring-offset-gray-900' : 'border-gray-700 bg-gray-800/50 hover:bg-gray-800'}`}
+                >
+                    <div className={`flex flex-col items-center justify-center pt-5 pb-6 text-purple-400 transition-transform duration-200 ${isDraggingOver ? 'scale-105' : ''}`}>
+                        <UploadIcon className="w-10 h-10 mb-3" />
+                        <p className="mb-2 text-sm text-center font-semibold px-2">{isDraggingOver ? 'Drop the image!' : 'Click to upload or drag and drop'}</p>
+                        <p className="text-xs text-gray-500">JPG, PNG, WEBP, or GIF</p>
+                    </div>
+                    <input id="style-image-upload" type="file" className="hidden" accept="image/jpeg,image/png,image/gif,image/webp" onChange={(e) => handleStyleFileSelect(e.target.files)} />
+                </label>
+            </div>
+        );
+    };
 
     return (
         <div className="w-full max-w-7xl mx-auto flex flex-col items-center gap-6 animate-fade-in">
-            <div className="w-full bg-gray-900 border border-gray-700/50 rounded-xl p-4 md:p-6 flex flex-col gap-4 backdrop-blur-sm shadow-lg">
+            <div className="w-full bg-gray-900 border border-gray-700/50 rounded-xl p-4 md:p-6 flex flex-col gap-6 backdrop-blur-sm shadow-lg">
                 <div className="text-center">
                     <h2 className="text-2xl font-bold text-gray-200">Batch Processing</h2>
-                    <p className="text-md text-gray-400">{files.length} images ready to edit.</p>
+                    <p className="text-md text-gray-400">{totalImages} images loaded.</p>
                 </div>
 
-                {/* --- Step 1: Controls --- */}
+                {/* --- Step 1: Controls (if not started) --- */}
                 {!hasStartedProcessing && (
-                    <div className="w-full p-4 border-2 border-dashed border-gray-700 rounded-lg bg-gray-800/50 flex flex-col items-center gap-4">
-                        <div className="w-full flex flex-col items-center gap-4">
-                            <label className="text-lg font-semibold text-gray-200">
-                               1. Select a Preset Effect
-                            </label>
-                            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 w-full">
-                               {presets.map(preset => (
-                                  <button
-                                    key={preset.name}
-                                    onClick={() => handlePresetClick(preset)}
-                                    className={`w-full text-center border font-semibold py-3 px-2 rounded-md transition-all duration-200 ease-in-out active:scale-95 text-sm ${selectedPreset?.name === preset.name ? 'bg-purple-600 text-white border-purple-600 shadow-md' : 'bg-gray-800 text-gray-300 hover:bg-gray-700 border-gray-700'}`}
-                                  >
-                                    {preset.name}
-                                  </button>
-                               ))}
-                            </div>
+                    <div className="w-full p-4 border-2 border-dashed border-gray-700 rounded-lg bg-gray-800/50 flex flex-col items-center gap-6">
+                        <div className="p-1 bg-gray-700/50 rounded-lg flex gap-1 w-full max-w-md">
+                            <button onClick={() => setBatchMode('effect')} className={`w-full py-2 rounded-md font-semibold transition-all duration-200 ${batchMode === 'effect' ? 'bg-purple-600 text-white shadow' : 'text-gray-400 hover:bg-gray-700'}`}>
+                              Apply Effect
+                            </button>
+                            <button onClick={() => setBatchMode('style')} className={`w-full py-2 rounded-md font-semibold transition-all duration-200 ${batchMode === 'style' ? 'bg-purple-600 text-white shadow' : 'text-gray-400 hover:bg-gray-700'}`}>
+                              Apply Style
+                            </button>
                         </div>
 
-                        <div className="flex items-center w-full max-w-lg my-2">
-                            <div className="flex-grow border-t border-gray-700"></div>
-                            <span className="flex-shrink mx-4 text-gray-400 font-semibold">OR</span>
-                            <div className="flex-grow border-t border-gray-700"></div>
-                        </div>
+                        {batchMode === 'effect' && (
+                            <div className="w-full flex flex-col items-center gap-4 animate-fade-in">
+                                <div className="w-full flex flex-col items-center gap-4">
+                                    <label className="text-lg font-semibold text-gray-200">
+                                       1. Select a Preset Effect
+                                    </label>
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 w-full">
+                                       {presets.map(preset => (
+                                          <button
+                                            key={preset.name}
+                                            onClick={() => handlePresetClick(preset)}
+                                            className={`w-full text-center border font-semibold py-3 px-2 rounded-md transition-all duration-200 ease-in-out active:scale-95 text-sm ${selectedPreset?.name === preset.name ? 'bg-purple-600 text-white border-purple-600 shadow-md' : 'bg-gray-800 text-gray-300 hover:bg-gray-700 border-gray-700'}`}
+                                          >
+                                            {preset.name}
+                                          </button>
+                                       ))}
+                                    </div>
+                                </div>
+        
+                                <div className="flex items-center w-full max-w-lg my-2">
+                                    <div className="flex-grow border-t border-gray-700"></div>
+                                    <span className="flex-shrink mx-4 text-gray-400 font-semibold">OR</span>
+                                    <div className="flex-grow border-t border-gray-700"></div>
+                                </div>
+                                
+                                <div className="w-full flex flex-col items-center gap-4">
+                                    <label htmlFor="custom-prompt-input" className="text-lg font-semibold text-gray-200">
+                                        2. Describe a Custom Edit
+                                    </label>
+                                    <input
+                                        id="custom-prompt-input"
+                                        type="text"
+                                        value={customPrompt}
+                                        onChange={handleCustomPromptChange}
+                                        placeholder="e.g., 'remove the background and make it transparent'"
+                                        className="w-full max-w-xl bg-gray-800 border border-gray-700 text-gray-200 rounded-lg p-4 text-base focus:ring-2 focus:ring-purple-500 focus:outline-none transition disabled:cursor-not-allowed disabled:opacity-60 placeholder-gray-500"
+                                        disabled={isProcessing}
+                                    />
+                                </div>
+                            </div>
+                        )}
                         
-                        <div className="w-full flex flex-col items-center gap-4">
-                            <label htmlFor="custom-prompt-input" className="text-lg font-semibold text-gray-200">
-                                2. Describe a Custom Edit
-                            </label>
-                            <input
-                                id="custom-prompt-input"
-                                type="text"
-                                value={customPrompt}
-                                onChange={handleCustomPromptChange}
-                                placeholder="e.g., 'remove the background and make it transparent'"
-                                className="w-full max-w-xl bg-gray-800 border border-gray-700 text-gray-200 rounded-lg p-4 text-base focus:ring-2 focus:ring-purple-500 focus:outline-none transition disabled:cursor-not-allowed disabled:opacity-60 placeholder-gray-500"
-                                disabled={isProcessing}
-                            />
-                        </div>
+                        {batchMode === 'style' && (
+                           <div className="w-full flex flex-col items-center gap-4 animate-fade-in">
+                                {renderStyleUploader()}
+                                {styleFile && (
+                                    <div className="w-full flex flex-col items-center gap-4 mt-4 animate-fade-in">
+                                        <label htmlFor="style-prompt-input" className="text-lg font-semibold text-gray-200">
+                                            2. Describe how to apply the style (Optional)
+                                        </label>
+                                        <input
+                                            id="style-prompt-input"
+                                            type="text"
+                                            value={stylePrompt}
+                                            onChange={(e) => setStylePrompt(e.target.value)}
+                                            placeholder="e.g., 'focus on the texture and color palette'"
+                                            className="w-full max-w-xl bg-gray-800 border border-gray-700 text-gray-200 rounded-lg p-4 text-base focus:ring-2 focus:ring-purple-500 focus:outline-none transition disabled:cursor-not-allowed disabled:opacity-60 placeholder-gray-500"
+                                            disabled={isProcessing}
+                                        />
+                                    </div>
+                                )}
+                           </div>
+                        )}
 
                         <button
-                            onClick={handleStartProcessing}
+                            onClick={() => handleStartProcessing(batchItems)}
                             disabled={!canStart}
                             className="w-full max-w-md mt-4 bg-gradient-to-br from-purple-600 to-fuchsia-500 text-white font-bold py-4 px-8 text-lg rounded-lg transition-all duration-300 ease-in-out shadow-lg shadow-purple-500/30 hover:shadow-xl hover:shadow-purple-500/50 hover:-translate-y-px active:scale-95 active:shadow-inner disabled:from-purple-400 disabled:to-fuchsia-300 disabled:shadow-none disabled:cursor-not-allowed disabled:transform-none"
                         >
@@ -305,10 +393,14 @@ const BatchProcessingScreen: React.FC<BatchProcessingScreenProps> = ({ files, on
                          <div className="w-full max-w-2xl bg-gray-700 rounded-full h-5 overflow-hidden">
                             <div 
                                 className="bg-gradient-to-r from-purple-500 to-fuchsia-500 h-full rounded-full transition-all duration-500 ease-out progress-bar-animated"
-                                style={{ width: `${(processedCount / files.length) * 100}%`}}
+                                style={{ width: `${(processedCount / totalImages) * 100}%`}}
                             ></div>
                          </div>
-                         <p className="font-mono text-purple-300 text-lg mt-1">{processedCount} / {files.length} images processed</p>
+                         <div className="flex gap-4 sm:gap-6 font-mono text-sm mt-2">
+                             <span className="text-purple-300">Total: {totalImages}</span>
+                             <span className="text-green-400">Success: {totalCompleted}</span>
+                             <span className="text-red-400">Failed: {totalFailed}</span>
+                         </div>
                          <button 
                             onClick={handleCancelProcessing}
                             className="mt-2 text-center text-red-500 font-semibold py-2 px-4 rounded-lg transition-all duration-200 ease-in-out hover:bg-red-500/10 active:scale-95 text-sm"
@@ -319,7 +411,40 @@ const BatchProcessingScreen: React.FC<BatchProcessingScreenProps> = ({ files, on
                 )}
 
                 {/* --- Step 3: Results --- */}
-                {renderResults()}
+                {isFullyComplete && (
+                    <div className="w-full p-6 border-2 border-dashed border-purple-400 rounded-lg bg-purple-950/20 flex flex-col items-center gap-4 text-center">
+                        <h3 className="text-2xl font-bold text-gray-200">
+                            {isCancelledRef.current ? "Processing Stopped" : "Processing Complete!"}
+                        </h3>
+                        <p className="text-gray-400">
+                           {totalCompleted} of {totalImages} images processed successfully. {totalFailed > 0 && `${totalFailed} failed.`}
+                        </p>
+                        <div className="flex flex-wrap items-center justify-center gap-3 mt-2">
+                             <button
+                                onClick={handleDownloadAll}
+                                disabled={isZipping || totalCompleted === 0}
+                                className="flex items-center justify-center gap-3 bg-gradient-to-br from-purple-600 to-fuchsia-500 text-white font-bold py-3 px-6 text-base rounded-lg transition-all duration-300 ease-in-out shadow-lg shadow-purple-500/30 hover:shadow-xl hover:shadow-purple-500/50 hover:-translate-y-px active:scale-95 active:shadow-inner disabled:from-purple-400 disabled:to-fuchsia-300 disabled:shadow-none disabled:cursor-not-allowed disabled:transform-none"
+                            >
+                                {isZipping ? <><Spinner /> Zipping...</> : <><DownloadZipIcon className="w-5 h-5" /> Download All ({totalCompleted})</>}
+                            </button>
+                            {totalFailed > 0 && (
+                                <button 
+                                    onClick={handleRetryFailed}
+                                    className="flex items-center justify-center gap-2 text-center bg-gray-800 border border-gray-700 text-gray-300 font-semibold py-2 px-4 rounded-lg transition-all duration-200 ease-in-out hover:bg-gray-700 active:scale-95 text-sm"
+                                >
+                                    <RetryIcon className="w-4 h-4" />
+                                    Retry Failed ({totalFailed})
+                                </button>
+                            )}
+                            <button 
+                                onClick={onExit}
+                                className="text-center bg-gray-800 border border-gray-700 text-gray-300 font-semibold py-2 px-4 rounded-lg transition-all duration-200 ease-in-out hover:bg-gray-700 active:scale-95 text-sm"
+                            >
+                                Start Over
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
             
             <div className="w-full grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-4">

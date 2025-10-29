@@ -1,3 +1,5 @@
+
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -16,6 +18,16 @@ const StartScreen: React.FC<StartScreenProps> = ({ onFileSelect }) => {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onFileSelect(e.target.files);
+  };
+
+  const handleCardMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const card = e.currentTarget;
+    const rect = card.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    card.style.setProperty('--mouse-x', `${x}px`);
+    card.style.setProperty('--mouse-y', `${y}px`);
   };
 
   const features = [
@@ -151,6 +163,7 @@ const StartScreen: React.FC<StartScreenProps> = ({ onFileSelect }) => {
                 key={feature.title}
                 className="feature-card rounded-2xl p-8 text-center animate-fade-in"
                 style={{ animationDelay: `${index * 150}ms` }}
+                onMouseMove={handleCardMouseMove}
               >
                 <div className="w-16 h-16 bg-purple-900/50 text-purple-400 rounded-full flex items-center justify-center mx-auto mb-6">
                   <feature.icon className="w-8 h-8" />
@@ -165,7 +178,7 @@ const StartScreen: React.FC<StartScreenProps> = ({ onFileSelect }) => {
       {/* How It Works Section */}
       <section className="w-full max-w-7xl mx-auto py-20 px-8">
         <div className="text-center mb-16">
-            <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight text-gray-100">
+            <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight text-gray-100 glitch glitch-text-white" data-text="Three Simple Steps to Perfection">
                 Three Simple Steps to Perfection
             </h2>
             <p className="mt-4 text-lg text-gray-400 max-w-3xl mx-auto">
@@ -174,15 +187,15 @@ const StartScreen: React.FC<StartScreenProps> = ({ onFileSelect }) => {
         </div>
         <div className="relative grid grid-cols-1 md:grid-cols-3 gap-12">
             <div className="absolute top-1/2 left-0 w-full h-px bg-gray-700/50 hidden md:block"></div>
-            <div className="absolute top-1/2 left-0 w-full h-px bg-gradient-to-r from-purple-500 to-fuchsia-500 hidden md:block animate-pulse"></div>
+            <div className="connector-line absolute top-1/2 left-0 w-full h-px hidden md:block"></div>
 
             {howItWorksSteps.map((step, index) => (
                 <div
                     key={step.title}
-                    className="step-card relative text-center animate-fade-in p-6"
+                    className="step-card group relative text-center animate-fade-in p-6 rounded-2xl"
                     style={{ animationDelay: `${index * 200}ms` }}
                 >
-                    <div className="absolute -top-6 left-1/2 -translate-x-1/2 w-12 h-12 bg-gray-800 border-2 border-purple-500 rounded-full flex items-center justify-center text-xl font-bold text-purple-300">
+                    <div className="absolute -top-6 left-1/2 -translate-x-1/2 w-12 h-12 bg-gray-800 border-2 border-purple-500 rounded-full flex items-center justify-center text-xl font-bold text-purple-300 transition-all duration-300 group-hover:scale-110 group-hover:shadow-lg group-hover:shadow-purple-500/30">
                         {index + 1}
                     </div>
                     <div className="mt-10">
@@ -199,7 +212,9 @@ const StartScreen: React.FC<StartScreenProps> = ({ onFileSelect }) => {
       <section className="w-full max-w-7xl mx-auto py-20 px-8">
           <div className="text-center mb-16">
             <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight text-gray-100">
-              Loved by Creatives Everywhere
+              <span className="glitch glitch-text-white" data-text="Loved by Creatives Everywhere">
+                Loved by Creatives Everywhere
+              </span>
             </h2>
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

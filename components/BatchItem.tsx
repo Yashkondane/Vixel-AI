@@ -6,18 +6,9 @@
 import React, { useState, useEffect } from 'react';
 import Spinner from './Spinner';
 import { type BatchItem as BatchItemType } from './BatchProcessingScreen';
+import { DownloadIcon, CheckIcon, ErrorIcon, ClockIcon } from './icons';
 
-interface BatchItemProps {
-    item: BatchItemType;
-}
-
-const DownloadIcon: React.FC<{ className?: string }> = ({ className }) => (
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={className}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
-    </svg>
-);
-
-const BatchItem: React.FC<BatchItemProps> = ({ item }) => {
+const BatchItem: React.FC<{ item: BatchItemType }> = ({ item }) => {
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
     useEffect(() => {
@@ -34,7 +25,6 @@ const BatchItem: React.FC<BatchItemProps> = ({ item }) => {
         const link = document.createElement('a');
         link.href = item.processedUrl;
         
-        // Add a suffix to the original filename
         const nameParts = item.originalFile.name.split('.');
         const extension = nameParts.pop();
         const baseName = nameParts.join('.');
@@ -47,6 +37,13 @@ const BatchItem: React.FC<BatchItemProps> = ({ item }) => {
 
     const renderOverlay = () => {
         switch (item.status) {
+            case 'pending':
+                return (
+                    <div className="absolute inset-0 bg-gray-950/60 flex flex-col items-center justify-center gap-2 text-gray-400">
+                        <ClockIcon className="w-8 h-8" />
+                        <p className="text-xs font-medium">Pending</p>
+                    </div>
+                );
             case 'processing':
                 return (
                     <div className="absolute inset-0 bg-gray-950/80 backdrop-blur-sm flex flex-col items-center justify-center gap-2 text-gray-200">
@@ -56,28 +53,51 @@ const BatchItem: React.FC<BatchItemProps> = ({ item }) => {
                 );
             case 'complete':
                 return (
-                    <div className="absolute bottom-2 right-2">
+                    <div className="absolute inset-0 bg-green-950/70 opacity-0 hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2 text-green-200">
+                        <CheckIcon className="w-8 h-8" />
+                        <p className="text-sm font-bold">Complete</p>
                         <button 
                             onClick={handleDownload}
-                            className="p-2 bg-purple-600 text-white rounded-full shadow-lg hover:bg-purple-700 active:scale-95 transition-all"
+                            className="mt-2 px-3 py-1 bg-green-600 text-white rounded-md shadow-lg text-xs font-bold hover:bg-green-700 active:scale-95 transition-all"
                             aria-label="Download edited image"
                         >
-                           <DownloadIcon className="w-4 h-4" />
+                           <div className="flex items-center gap-1.5">
+                                <DownloadIcon className="w-4 h-4" />
+                                Download
+                           </div>
                         </button>
                     </div>
                 );
-            default: // pending
+            case 'error':
+                 return (
+                    <div className="group relative inset-0 bg-red-950/80 backdrop-blur-sm flex flex-col items-center justify-center gap-2 text-red-200 p-2 text-center">
+                        <ErrorIcon className="w-8 h-8" />
+                        <p className="text-sm font-bold">Failed</p>
+                        {item.errorMessage && (
+                             <div className="absolute z-10 bottom-full mb-2 w-max max-w-xs p-2 bg-gray-900 border border-gray-700 text-white text-xs rounded-md shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
+                                {item.errorMessage}
+                            </div>
+                        )}
+                    </div>
+                );
+            default:
                 return null;
         }
     };
     
     return (
-        <div className="relative aspect-square w-full bg-gray-900 rounded-lg overflow-hidden shadow-md animate-fade-in">
-            {item.status === 'complete' && item.processedUrl ? (
-                <img src={item.processedUrl} alt="Edited result" className="w-full h-full object-cover" />
-            ) : previewUrl ? (
-                <img src={previewUrl} alt={item.originalFile.name} className="w-full h-full object-cover" />
-            ) : null}
+        <div className="relative aspect-square w-full bg-gray-900 rounded-lg overflow-hidden shadow-md animate-fade-in border border-gray-700/50">
+            <div 
+                className={`w-full h-full transition-all duration-300 ${item.status === 'pending' || item.status === 'error' ? 'opacity-40 brightness-75' : 'opacity-100'}`}
+            >
+                {item.status === 'complete' && item.processedUrl ? (
+                    <img src={item.processedUrl} alt="Edited result" className="w-full h-full object-cover" />
+                ) : previewUrl ? (
+                    <img src={previewUrl} alt={item.originalFile.name} className="w-full h-full object-cover" />
+                ) : (
+                    <div className="w-full h-full bg-gray-800"></div>
+                )}
+            </div>
             {renderOverlay()}
         </div>
     );

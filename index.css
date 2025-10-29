@@ -1,3 +1,4 @@
+
 @keyframes bg-pan {
   0% {
     background-position: 100% 50%;
@@ -174,26 +175,75 @@
 
 /* Feature Card styles */
 .feature-card {
-  background-color: rgba(23, 23, 27, 0.7);
+  position: relative;
+  background-color: rgb(23 23 27); /* Solid, slightly off-black */
   border: 1px solid rgba(55, 65, 81, 0.5);
   transition: all 0.3s ease-in-out;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  overflow: hidden; /* Contain the aurora effect */
+  z-index: 1;
+}
+
+/* The content of the card needs to be above the aurora effect */
+.feature-card > * {
+  position: relative;
+  z-index: 2;
+}
+
+/* The aurora effect itself */
+.feature-card::before {
+  content: '';
+  position: absolute;
+  left: var(--mouse-x, 50%); /* Default to center */
+  top: var(--mouse-y, 50%);
+  width: 350px;
+  height: 350px;
+  background-image: radial-gradient(
+    circle farthest-side at center,
+    rgba(168, 85, 247, 0.15), /* Soft purple glow */
+    transparent
+  );
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  transition: opacity 0.4s ease-out;
+  z-index: 1;
 }
 
 .feature-card:hover {
   transform: translateY(-8px);
   border-color: rgba(168, 85, 247, 0.6);
-  box-shadow: 0 10px 30px -10px rgba(168, 85, 247, 0.3);
+  box-shadow: 0 10px 30px -10px rgba(168, 85, 247, 0.25);
+}
+
+.feature-card:hover::before {
+  opacity: 1;
 }
 
 /* How It Works Step Card */
 .step-card {
-  background-color: rgba(23, 23, 27, 0.7);
-  border: 1px solid transparent;
+  position: relative;
+  background-color: rgb(23 23 27 / 0.7);
+  border: 1px solid rgb(55 65 81 / 0.5);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   z-index: 10;
+  transition: all 0.3s ease-in-out;
+}
+
+.step-card:hover {
+  transform: translateY(-8px);
+  border-color: rgb(168 85 247 / 0.6);
+  box-shadow: 0 10px 30px -10px rgb(168 85 247 / 0.25);
+}
+
+.connector-line {
+  background-image: linear-gradient(90deg, transparent, #a855f7, #d946ef, transparent);
+  background-size: 200% 100%;
+  animation: shimmer 5s linear infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 /* Testimonial Card */

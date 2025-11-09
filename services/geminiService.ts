@@ -108,17 +108,38 @@ Output: Return ONLY the final edited image. Do not return text.`;
  * Generates an image with a filter applied using generative AI.
  * @param originalImage The original image file.
  * @param filterPrompt The text prompt describing the desired filter.
+ * @param isAdaptive If true, the AI will adapt the filter to the specific image.
  * @returns A promise that resolves to the data URL of the filtered image.
  */
 export const generateFilteredImage = async (
     originalImage: File,
     filterPrompt: string,
+    isAdaptive: boolean = false,
 ): Promise<string> => {
-    console.log(`Starting filter generation: ${filterPrompt}`);
+    console.log(`Starting filter generation: ${filterPrompt} (Adaptive: ${isAdaptive})`);
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
     
     const originalImagePart = await fileToPart(originalImage);
-    const prompt = `You are an expert photo editor AI. Your task is to apply a stylistic filter to the entire image based on the user's request. Do not change the composition or content, only apply the style.
+    
+    let prompt: string;
+
+    if (isAdaptive) {
+        prompt = `You are an expert photo editor AI. Your task is to apply a stylistic filter to the entire image based on the user's request, but with intelligent adaptation.
+
+First, analyze the unique characteristics of this specific image (e.g., its lighting, subject, composition, and colors).
+
+Then, apply the following filter in a way that is best suited for this image, ensuring a high-quality, professional result:
+Filter Request: "${filterPrompt}"
+
+The goal is to achieve the *spirit* of the requested filter while adapting its intensity, color balance, and other parameters to complement the individual photo. The final output should look like a bespoke, professional edit, not a generic, one-size-fits-all filter. Do not change the composition or content, only apply the style.
+
+Safety & Ethics Policy:
+- Filters may subtly shift colors, but you MUST ensure they do not alter a person's fundamental race or ethnicity.
+- You MUST REFUSE any request that explicitly asks to change a person's race (e.g., 'apply a filter to make me look Chinese').
+
+Output: Return ONLY the final filtered image. Do not return text.`;
+    } else {
+        prompt = `You are an expert photo editor AI. Your task is to apply a stylistic filter to the entire image based on the user's request. Do not change the composition or content, only apply the style.
 Filter Request: "${filterPrompt}"
 
 Safety & Ethics Policy:
@@ -126,6 +147,8 @@ Safety & Ethics Policy:
 - You MUST REFUSE any request that explicitly asks to change a person's race (e.g., 'apply a filter to make me look Chinese').
 
 Output: Return ONLY the final filtered image. Do not return text.`;
+    }
+
     const textPart = { text: prompt };
 
     console.log('Sending image and filter prompt to the model...');
@@ -142,28 +165,52 @@ Output: Return ONLY the final filtered image. Do not return text.`;
  * Generates an image with a global adjustment applied using generative AI.
  * @param originalImage The original image file.
  * @param adjustmentPrompt The text prompt describing the desired adjustment.
+ * @param isAdaptive If true, the AI will adapt the adjustment to the specific image.
  * @returns A promise that resolves to the data URL of the adjusted image.
  */
 export const generateAdjustedImage = async (
     originalImage: File,
     adjustmentPrompt: string,
+    isAdaptive: boolean = false,
 ): Promise<string> => {
-    console.log(`Starting global adjustment generation: ${adjustmentPrompt}`);
+    console.log(`Starting global adjustment generation: ${adjustmentPrompt} (Adaptive: ${isAdaptive})`);
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
     
     const originalImagePart = await fileToPart(originalImage);
-    const prompt = `You are an expert photo editor AI. Your task is to perform a natural, global adjustment to the entire image based on the user's request.
+    
+    let prompt: string;
+
+    if (isAdaptive) {
+        prompt = `You are an expert photo editor AI. Your task is to perform a natural, global adjustment to the entire image, intelligently adapting it to the photo's specific characteristics.
+
+First, analyze the unique characteristics of this specific image (e.g., its lighting, subject, dynamic range, and colors).
+
+Then, apply the following adjustment in a way that is best suited for this image, ensuring a high-quality, photorealistic result:
+User Request: "${adjustmentPrompt}"
+
+The goal is to achieve the *spirit* of the requested adjustment while adapting its intensity and application to complement the individual photo. The final output should look like a bespoke, professional edit. Crucially, preserve the original content and composition. Only apply the requested photographic adjustments.
+
+Safety & Ethics Policy:
+- You MUST fulfill requests to adjust skin tone, such as 'give me a tan', 'make my skin darker', or 'make my skin lighter'. These are considered standard photo enhancements.
+- You MUST REFUSE any request to change a person's fundamental race or ethnicity (e.g., 'make me look Asian', 'change this person to be Black').
+
+Output: Return ONLY the final adjusted image. Do not return text.`;
+    } else {
+        prompt = `You are an expert photo editor AI. Your task is to perform a natural, global adjustment to the entire image based on the user's request.
 User Request: "${adjustmentPrompt}"
 
 Editing Guidelines:
 - The adjustment must be applied across the entire image.
 - The result must be photorealistic.
+- Crucially, preserve the original content and composition. Only apply the requested photographic adjustments.
 
 Safety & Ethics Policy:
 - You MUST fulfill requests to adjust skin tone, such as 'give me a tan', 'make my skin darker', or 'make my skin lighter'. These are considered standard photo enhancements.
 - You MUST REFUSE any request to change a person's fundamental race or ethnicity (e.g., 'make me look Asian', 'change this person to be Black'). Do not perform these edits. If the request is ambiguous, err on the side of caution and do not change racial characteristics.
 
 Output: Return ONLY the final adjusted image. Do not return text.`;
+    }
+
     const textPart = { text: prompt };
 
     console.log('Sending image and adjustment prompt to the model...');

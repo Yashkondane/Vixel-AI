@@ -67,6 +67,7 @@ const App: React.FC = () => {
   const [zoom, setZoom] = useState<number>(1);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState<boolean>(false);
+  const [isSpacebarDown, setIsSpacebarDown] = useState<boolean>(false);
   const panStartRef = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
   const didPanRef = useRef(false);
 
@@ -100,6 +101,54 @@ const App: React.FC = () => {
 
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex < history.length - 1;
+  
+  // Effect for spacebar panning
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.code === 'Space' && !e.repeat && appMode === 'single' && !isLoading) {
+            e.preventDefault();
+            setIsSpacebarDown(true);
+        }
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+        if (e.code === 'Space' && appMode === 'single') {
+            e.preventDefault();
+            setIsSpacebarDown(false);
+            // If the user was panning, end it when space is released.
+            if (isPanning) {
+              handlePanEnd();
+            }
+        }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+        window.removeEventListener('keydown', handleKeyDown);
+        window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [appMode, isLoading, isPanning]);
+
+  const getClampedPan = useCallback((newPan: { x: number, y: number }, currentZoom: number) => {
+      if (!imgRef.current) return newPan;
+
+      // The container for the image gives us the viewport size
+      const container = imgRef.current.parentElement;
+      if (!container) return newPan;
+
+      const { clientWidth, clientHeight } = container;
+      
+      // Pan limits are calculated based on how much the scaled image overflows the viewport
+      // The pan value is in pre-zoom units, so we must divide the pixel overflow by the zoom level.
+      const panLimitX = Math.max(0, (clientWidth * currentZoom - clientWidth) / (2 * currentZoom));
+      const panLimitY = Math.max(0, (clientHeight * currentZoom - clientHeight) / (2 * currentZoom));
+
+      return {
+          x: Math.max(-panLimitX, Math.min(panLimitX, newPan.x)),
+          y: Math.max(-panLimitY, Math.min(panLimitY, newPan.y)),
+      };
+  }, []);
 
   const handleZoomReset = useCallback(() => {
     setZoom(1);
@@ -358,7 +407,7 @@ const App: React.FC = () => {
   }, [currentImage]);
 
   const handleImageClick = (e: React.MouseEvent<HTMLImageElement>) => {
-    if (activeTab !== 'retouch' || didPanRef.current) return;
+    if (activeTab !== 'retouch' || didPanRef.current || isSpacebarDown) return;
     
     const img = e.currentTarget;
     const rect = img.getBoundingClientRect();
@@ -402,11 +451,34 @@ const App: React.FC = () => {
   const imageStyle = generateFilterStyle(manualAdjustments);
 
   const ZOOM_STEP = 0.2;
-  const handleZoomIn = () => setZoom(prev => Math.min(3, prev + ZOOM_STEP));
-  const handleZoomOut = () => setZoom(prev => Math.max(0.5, prev - ZOOM_STEP));
+  const handleZoom = (newZoomLevel: number) => {
+    const clampedZoom = Math.max(0.5, Math.min(5, newZoomLevel));
+
+    if (imgRef.current?.parentElement) {
+      const { clientWidth, clientHeight } = imgRef.current.parentElement;
+      const focusX = clientWidth / 2; // Center of viewport
+      const focusY = clientHeight / 2;
+
+      // Pan logic to zoom towards the center of the viewport
+      const newPanX = (focusX / clampedZoom) - (focusX / zoom) + pan.x;
+      const newPanY = (focusY / clampedZoom) - (focusY / zoom) + pan.y;
+
+      const clampedPan = getClampedPan({x: newPanX, y: newPanY}, clampedZoom);
+
+      setZoom(clampedZoom);
+      setPan(clampedPan);
+    } else {
+      setZoom(clampedZoom);
+    }
+  };
+
+  const handleZoomIn = () => handleZoom(zoom + ZOOM_STEP);
+  const handleZoomOut = () => handleZoom(zoom - ZOOM_STEP);
 
   const handlePanStart = (e: React.MouseEvent | React.TouchEvent) => {
-    if (zoom <= 1 || activeTab === 'crop') return;
+    const isPannable = (zoom > 1 || isSpacebarDown) && activeTab !== 'crop' && !isSliderCompareActive;
+    if (!isPannable) return;
+    
     e.preventDefault();
     didPanRef.current = false;
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
@@ -425,19 +497,11 @@ const App: React.FC = () => {
     const dx = clientX - panStartRef.current.startX;
     const dy = clientY - panStartRef.current.startY;
   
+    // Pan values are in pre-zoom units, so divide mouse movement by zoom
     const newPanX = panStartRef.current.panX + (dx / zoom);
     const newPanY = panStartRef.current.panY + (dy / zoom);
   
-    if (imgRef.current) {
-      const { clientWidth, clientHeight } = imgRef.current;
-      const panLimitX = Math.max(0, (clientWidth * zoom - clientWidth) / (2 * zoom));
-      const panLimitY = Math.max(0, (clientHeight * zoom - clientHeight) / (2 * zoom));
-  
-      setPan({
-        x: Math.max(-panLimitX, Math.min(panLimitX, newPanX)),
-        y: Math.max(-panLimitY, Math.min(panLimitY, newPanY)),
-      });
-    }
+    setPan(getClampedPan({x: newPanX, y: newPanY}, zoom));
   };
   
   const handlePanEnd = () => {
@@ -446,6 +510,33 @@ const App: React.FC = () => {
     // Set a timeout to reset didPanRef, allowing click events to register again.
     setTimeout(() => { didPanRef.current = false; }, 0);
   };
+
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    if (activeTab === 'crop' || isSliderCompareActive) return;
+    
+    e.preventDefault();
+    
+    const ZOOM_SENSITIVITY = 0.001;
+    // Adjust zoom sensitivity based on current zoom level for smoother interaction
+    const newZoom = zoom - e.deltaY * ZOOM_SENSITIVITY * zoom;
+    const clampedZoom = Math.max(0.5, Math.min(5, newZoom));
+    
+    if (clampedZoom.toFixed(2) === zoom.toFixed(2)) return;
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    // Pan logic to keep the point under the cursor stationary
+    // T' = p/s' - p/s + T
+    const newPanX = (mouseX / clampedZoom) - (mouseX / zoom) + pan.x;
+    const newPanY = (mouseY / clampedZoom) - (mouseY / zoom) + pan.y;
+    
+    const clampedPan = getClampedPan({x: newPanX, y: newPanY}, clampedZoom);
+
+    setZoom(clampedZoom);
+    setPan(clampedPan);
+  }, [zoom, pan, activeTab, isSliderCompareActive, getClampedPan]);
 
   const renderContent = () => {
     if (isLoading && appMode === 'start') {
@@ -480,9 +571,12 @@ const App: React.FC = () => {
         return <BatchProcessingScreen files={batchFiles} onExit={handleStartOver} />;
     }
 
+    const isPannable = (zoom > 1 || isSpacebarDown) && activeTab !== 'crop' && !isSliderCompareActive;
+    const cursorClass = isPannable ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : '';
+
     const imageDisplay = (
        <div 
-        className={`relative w-full rounded-xl overflow-hidden ${zoom > 1 && activeTab !== 'crop' ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : ''}`}
+        className={`relative w-full rounded-xl overflow-hidden ${cursorClass}`}
         style={{maxHeight: '60vh'}}
         onMouseDown={handlePanStart}
         onMouseMove={handlePanMove}
@@ -491,12 +585,14 @@ const App: React.FC = () => {
         onTouchStart={handlePanStart}
         onTouchMove={handlePanMove}
         onTouchEnd={handlePanEnd}
+        onWheel={handleWheel}
       >
         <div // Transform wrapper
             className="relative w-full h-full"
             style={{
                 transform: `scale(${zoom}) translate(${pan.x}px, ${pan.y}px)`,
-                transition: isPanning ? 'none' : 'transform 0.15s ease-out',
+                transition: isPanning ? 'none' : 'transform 0.1s ease-out',
+                willChange: 'transform',
             }}
         >
             {originalImageUrl && (
@@ -514,7 +610,7 @@ const App: React.FC = () => {
                 alt="Current"
                 onClick={handleImageClick}
                 style={imageStyle}
-                className={`absolute top-0 left-0 w-full h-auto object-contain max-h-[60vh] rounded-xl transition-opacity duration-200 ease-in-out ${isComparing ? 'opacity-0' : 'opacity-100'} ${(activeTab === 'retouch' && zoom <= 1) ? 'cursor-crosshair' : ''}`}
+                className={`absolute top-0 left-0 w-full h-auto object-contain max-h-[60vh] rounded-xl transition-opacity duration-200 ease-in-out ${isComparing ? 'opacity-0' : 'opacity-100'} ${(activeTab === 'retouch' && !isPannable) ? 'cursor-crosshair' : ''}`}
                 draggable={false}
             />
              {displayHotspot && !isLoading && activeTab === 'retouch' && !isSliderCompareActive && (

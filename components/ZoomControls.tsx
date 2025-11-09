@@ -34,7 +34,7 @@ const ZoomControls: React.FC<ZoomControlsProps> = ({ zoom, onZoomIn, onZoomOut, 
       </button>
       <button
         onClick={onZoomIn}
-        disabled={zoom >= 3}
+        disabled={zoom >= 5}
         className="w-8 h-8 flex items-center justify-center text-gray-300 font-bold text-xl rounded-md hover:bg-gray-700 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
         aria-label="Zoom in"
       >

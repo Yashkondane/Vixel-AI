@@ -87,6 +87,7 @@ const BatchProcessingScreen: React.FC<BatchProcessingScreenProps> = ({ files, on
     const [isDraggingOver, setIsDraggingOver] = useState(false);
     const [styleError, setStyleError] = useState<string | null>(null);
     const [stylePrompt, setStylePrompt] = useState('');
+    const [isAdaptive, setIsAdaptive] = useState(false);
     
     useEffect(() => {
         let objectUrl: string | null = null;
@@ -138,8 +139,8 @@ const BatchProcessingScreen: React.FC<BatchProcessingScreenProps> = ({ files, on
                 const apiCall = () => {
                     if (batchMode === 'effect') {
                         const activePrompt = customPrompt.trim() || selectedPreset?.prompt;
-                        if (customPrompt.trim()) return generateAdjustedImage(item.originalFile, activePrompt!);
-                        if (selectedPreset) return selectedPreset.type === 'adjustment' ? generateAdjustedImage(item.originalFile, selectedPreset.prompt) : generateFilteredImage(item.originalFile, selectedPreset.prompt);
+                        if (customPrompt.trim()) return generateAdjustedImage(item.originalFile, activePrompt!, isAdaptive);
+                        if (selectedPreset) return selectedPreset.type === 'adjustment' ? generateAdjustedImage(item.originalFile, selectedPreset.prompt, isAdaptive) : generateFilteredImage(item.originalFile, selectedPreset.prompt, isAdaptive);
                     } else if (batchMode === 'style') {
                         return generateStyleTransferImage(item.originalFile, styleFile!, stylePrompt);
                     }
@@ -160,7 +161,7 @@ const BatchProcessingScreen: React.FC<BatchProcessingScreenProps> = ({ files, on
             }
         }
         setIsProcessing(false);
-    }, [selectedPreset, customPrompt, batchItems, batchMode, styleFile, stylePrompt]);
+    }, [selectedPreset, customPrompt, batchItems, batchMode, styleFile, stylePrompt, isAdaptive]);
 
     const handleCancelProcessing = () => {
         isCancelledRef.current = true;
@@ -374,6 +375,24 @@ const BatchProcessingScreen: React.FC<BatchProcessingScreenProps> = ({ files, on
                                     </div>
                                 )}
                            </div>
+                        )}
+
+                        {batchMode === 'effect' && (
+                          <div className="relative group flex items-center justify-center mt-4 p-3 bg-gray-700/50 rounded-lg">
+                              <label className="flex items-center cursor-pointer">
+                                  <div className="relative">
+                                      <input type="checkbox" checked={isAdaptive} onChange={() => setIsAdaptive(!isAdaptive)} className="sr-only peer" />
+                                      <div className="block bg-gray-600 w-14 h-8 rounded-full"></div>
+                                      <div className="dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform peer-checked:translate-x-full peer-checked:bg-purple-400"></div>
+                                  </div>
+                                  <div className="ml-3 text-gray-200 font-semibold">
+                                      Enable Adaptive AI
+                                  </div>
+                              </label>
+                              <div className="absolute z-10 bottom-full mb-2 w-max max-w-xs p-2 bg-gray-900 border border-gray-700 text-white text-xs rounded-md shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
+                                When enabled, the AI will intelligently adapt the selected effect for each image's unique lighting and composition, aiming for a consistent look across the batch.
+                              </div>
+                          </div>
                         )}
 
                         <button

@@ -6,7 +6,7 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import ReactCrop, { type Crop, type PixelCrop } from 'react-image-crop';
-import { generateEditedImage, generateFilteredImage, generateAdjustedImage, generateStyleTransferImage } from './services/geminiService';
+import { generateEditedImage, generateFilteredImage, generateAdjustedImage, generateStyleTransferImage, generateMaskedImage } from './services/geminiService';
 import Header from './components/Header';
 import Spinner from './components/Spinner';
 import FilterPanel from './components/FilterPanel';
@@ -18,9 +18,11 @@ import ImageComparator from './components/ImageComparator';
 import StyleTransferPanel from './components/StyleTransferPanel';
 import BatchProcessingScreen from './components/BatchProcessingScreen';
 import ZoomControls from './components/ZoomControls';
+import MaskPanel from './components/MaskPanel';
+import MaskingCanvas, { type MaskingCanvasRef } from './components/MaskingCanvas';
 
 // Helper to convert a data URL string to a File object
-const dataURLtoFile = (dataurl: string, filename: string): File => {
+export const dataURLtoFile = (dataurl: string, filename: string): File => {
     const arr = dataurl.split(',');
     if (arr.length < 2) throw new Error("Invalid data URL");
     const mimeMatch = arr[0].match(/:(.*?);/);
@@ -36,7 +38,7 @@ const dataURLtoFile = (dataurl: string, filename: string): File => {
     return new File([u8arr], filename, {type:mime});
 }
 
-type Tab = 'retouch' | 'adjust' | 'filters' | 'crop' | 'style';
+type Tab = 'retouch' | 'adjust' | 'filters' | 'mask' | 'crop' | 'style';
 type AppMode = 'start' | 'single' | 'batch';
 
 const App: React.FC = () => {
@@ -71,6 +73,20 @@ const App: React.FC = () => {
   const panStartRef = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
   const didPanRef = useRef(false);
 
+  // History Brush (Masking) State
+  const [brushSourceIndex, setBrushSourceIndex] = useState<number | null>(null);
+  const [brushSize, setBrushSize] = useState<number>(50);
+  const [brushHardness, setBrushHardness] = useState<number>(100);
+  const [brushMode, setBrushMode] = useState<'brush' | 'erase'>('brush');
+  const [maskResetTrigger, setMaskResetTrigger] = useState<number>(0);
+  const [drawnMaskDataUrl, setDrawnMaskDataUrl] = useState<string | null>(null);
+  const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
+  const [brushCursorPosition, setBrushCursorPosition] = useState<{ x: number, y: number } | null>(null);
+  const [canUndoMaskStroke, setCanUndoMaskStroke] = useState<boolean>(false);
+  const [canRedoMaskStroke, setCanRedoMaskStroke] = useState<boolean>(false);
+  const maskingCanvasRef = useRef<MaskingCanvasRef>(null);
+
+
   const currentImage = history[historyIndex] ?? null;
   const originalImage = history[0] ?? null;
 
@@ -101,16 +117,33 @@ const App: React.FC = () => {
 
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex < history.length - 1;
+
+  const handlePanEnd = useCallback(() => {
+    setIsPanning(false);
+    panStartRef.current = null;
+    // Set a timeout to reset didPanRef, allowing click events to register again.
+    setTimeout(() => { didPanRef.current = false; }, 0);
+  }, []);
   
   // Effect for spacebar panning
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+        const activeElement = document.activeElement as HTMLElement;
+        const isTyping = activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA');
+        
+        if (isTyping) return; // Do not interfere with text input fields
+
         if (e.code === 'Space' && !e.repeat && appMode === 'single' && !isLoading) {
             e.preventDefault();
             setIsSpacebarDown(true);
         }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
+        const activeElement = document.activeElement as HTMLElement;
+        const isTyping = activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA');
+
+        if (isTyping) return;
+
         if (e.code === 'Space' && appMode === 'single') {
             e.preventDefault();
             setIsSpacebarDown(false);
@@ -128,7 +161,7 @@ const App: React.FC = () => {
         window.removeEventListener('keydown', handleKeyDown);
         window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [appMode, isLoading, isPanning]);
+  }, [appMode, isLoading, isPanning, handlePanEnd]);
 
   const getClampedPan = useCallback((newPan: { x: number, y: number }, currentZoom: number) => {
       if (!imgRef.current) return newPan;
@@ -164,6 +197,11 @@ const App: React.FC = () => {
     setCrop(undefined);
     setCompletedCrop(undefined);
     setManualAdjustments(defaultAdjustments);
+    setDrawnMaskDataUrl(null);
+    setBrushSourceIndex(null);
+    setMaskResetTrigger(t => t + 1);
+    setCanUndoMaskStroke(false);
+    setCanRedoMaskStroke(false);
   }, [history, historyIndex]);
 
   const handleFileSelect = (files: FileList | null) => {
@@ -303,6 +341,33 @@ const App: React.FC = () => {
         setIsLoading(false);
     }
   }, [currentImage, addImageToHistory]);
+
+  const handleApplyMask = useCallback(async () => {
+    if (!currentImage || brushSourceIndex === null || !drawnMaskDataUrl) {
+        setError('Please select a history version and draw a mask on the image first.');
+        return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+        const sourceImage = history[brushSourceIndex];
+        const maskFile = dataURLtoFile(drawnMaskDataUrl, `mask-${Date.now()}.png`);
+
+        const combinedImageUrl = await generateMaskedImage(currentImage, sourceImage, maskFile);
+        const newImageFile = dataURLtoFile(combinedImageUrl, `masked-${Date.now()}.png`);
+        
+        addImageToHistory(newImageFile);
+        
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+        setError(`Failed to apply the history brush. ${errorMessage}`);
+        console.error(err);
+    } finally {
+        setIsLoading(false);
+    }
+  }, [currentImage, brushSourceIndex, drawnMaskDataUrl, history, addImageToHistory]);
 
   const handleApplyCrop = useCallback(() => {
     if (!completedCrop || !imgRef.current) {
@@ -476,7 +541,7 @@ const App: React.FC = () => {
   const handleZoomOut = () => handleZoom(zoom - ZOOM_STEP);
 
   const handlePanStart = (e: React.MouseEvent | React.TouchEvent) => {
-    const isPannable = (zoom > 1 || isSpacebarDown) && activeTab !== 'crop' && !isSliderCompareActive;
+    const isPannable = (zoom > 1 || isSpacebarDown) && activeTab !== 'crop' && activeTab !== 'mask' && !isSliderCompareActive;
     if (!isPannable) return;
     
     e.preventDefault();
@@ -504,20 +569,12 @@ const App: React.FC = () => {
     setPan(getClampedPan({x: newPanX, y: newPanY}, zoom));
   };
   
-  const handlePanEnd = () => {
-    setIsPanning(false);
-    panStartRef.current = null;
-    // Set a timeout to reset didPanRef, allowing click events to register again.
-    setTimeout(() => { didPanRef.current = false; }, 0);
-  };
-
   const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
     if (activeTab === 'crop' || isSliderCompareActive) return;
     
     e.preventDefault();
     
     const ZOOM_SENSITIVITY = 0.001;
-    // Adjust zoom sensitivity based on current zoom level for smoother interaction
     const newZoom = zoom - e.deltaY * ZOOM_SENSITIVITY * zoom;
     const clampedZoom = Math.max(0.5, Math.min(5, newZoom));
     
@@ -528,7 +585,7 @@ const App: React.FC = () => {
     const mouseY = e.clientY - rect.top;
 
     // Pan logic to keep the point under the cursor stationary
-    // T' = p/s' - p/s + T
+    // T' = (p/s') - (p/s) + T
     const newPanX = (mouseX / clampedZoom) - (mouseX / zoom) + pan.x;
     const newPanY = (mouseY / clampedZoom) - (mouseY / zoom) + pan.y;
     
@@ -537,6 +594,18 @@ const App: React.FC = () => {
     setZoom(clampedZoom);
     setPan(clampedPan);
   }, [zoom, pan, activeTab, isSliderCompareActive, getClampedPan]);
+
+  const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
+      setImageDimensions({ width: e.currentTarget.clientWidth, height: e.currentTarget.clientHeight });
+  };
+
+  const handleUndoMaskStroke = () => {
+    maskingCanvasRef.current?.undo();
+  };
+  
+  const handleRedoMaskStroke = () => {
+    maskingCanvasRef.current?.redo();
+  };
 
   const renderContent = () => {
     if (isLoading && appMode === 'start') {
@@ -571,17 +640,29 @@ const App: React.FC = () => {
         return <BatchProcessingScreen files={batchFiles} onExit={handleStartOver} />;
     }
 
-    const isPannable = (zoom > 1 || isSpacebarDown) && activeTab !== 'crop' && !isSliderCompareActive;
-    const cursorClass = isPannable ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : '';
+    const isPannable = (zoom > 1 || isSpacebarDown) && activeTab !== 'crop' && activeTab !== 'mask' && !isSliderCompareActive;
+    
+    let cursorClass = '';
+    if (activeTab === 'mask') cursorClass = 'cursor-none';
+    else if (isPannable) cursorClass = isPanning ? 'cursor-grabbing' : 'cursor-grab';
 
     const imageDisplay = (
        <div 
         className={`relative w-full rounded-xl overflow-hidden ${cursorClass}`}
         style={{maxHeight: '60vh'}}
         onMouseDown={handlePanStart}
-        onMouseMove={handlePanMove}
+        onMouseMove={(e) => {
+            handlePanMove(e);
+            if(activeTab === 'mask') {
+                const rect = e.currentTarget.getBoundingClientRect();
+                setBrushCursorPosition({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+            }
+        }}
         onMouseUp={handlePanEnd}
-        onMouseLeave={handlePanEnd}
+        onMouseLeave={() => {
+            handlePanEnd();
+            if (activeTab === 'mask') setBrushCursorPosition(null);
+        }}
         onTouchStart={handlePanStart}
         onTouchMove={handlePanMove}
         onTouchEnd={handlePanEnd}
@@ -608,6 +689,7 @@ const App: React.FC = () => {
                 key={currentImageUrl}
                 src={currentImageUrl!}
                 alt="Current"
+                onLoad={onImageLoad}
                 onClick={handleImageClick}
                 style={imageStyle}
                 className={`absolute top-0 left-0 w-full h-auto object-contain max-h-[60vh] rounded-xl transition-opacity duration-200 ease-in-out ${isComparing ? 'opacity-0' : 'opacity-100'} ${(activeTab === 'retouch' && !isPannable) ? 'cursor-crosshair' : ''}`}
@@ -621,7 +703,34 @@ const App: React.FC = () => {
                     <div className="absolute inset-0 rounded-full w-full h-full animate-ping bg-purple-400"></div>
                 </div>
             )}
+             {activeTab === 'mask' && !isLoading && imageDimensions.width > 0 && (
+                <MaskingCanvas
+                    ref={maskingCanvasRef}
+                    width={imageDimensions.width}
+                    height={imageDimensions.height}
+                    brushSize={brushSize}
+                    brushHardness={brushHardness}
+                    brushMode={brushMode}
+                    onMaskChange={setDrawnMaskDataUrl}
+                    onDrawEnd={() => {}}
+                    resetTrigger={maskResetTrigger}
+                    onUndoStateChange={setCanUndoMaskStroke}
+                    onRedoStateChange={setCanRedoMaskStroke}
+                />
+            )}
         </div>
+         {activeTab === 'mask' && brushCursorPosition && !isPanning && (
+            <div
+                className="absolute rounded-full border border-white pointer-events-none -translate-x-1/2 -translate-y-1/2 z-20"
+                style={{
+                    left: brushCursorPosition.x,
+                    top: brushCursorPosition.y,
+                    width: brushSize * zoom,
+                    height: brushSize * zoom,
+                    mixBlendMode: 'difference'
+                }}
+            />
+        )}
       </div>
     );
     
@@ -665,7 +774,7 @@ const App: React.FC = () => {
                 />
             ) : imageDisplay }
             
-            {!isSliderCompareActive && activeTab !== 'crop' && (
+            {!isSliderCompareActive && activeTab !== 'crop' && activeTab !== 'mask' && (
                 <ZoomControls 
                     zoom={zoom} 
                     onZoomIn={handleZoomIn} 
@@ -676,7 +785,7 @@ const App: React.FC = () => {
         </div>
         
         <div className="w-full bg-gray-900 border border-gray-700/50 rounded-xl p-2 flex items-center justify-center gap-2 backdrop-blur-sm shadow-md">
-            {(['retouch', 'adjust', 'filters', 'crop', 'style'] as Tab[]).map(tab => (
+            {(['retouch', 'adjust', 'filters', 'mask', 'crop', 'style'] as Tab[]).map(tab => (
                  <button
                     key={tab}
                     onClick={() => setActiveTab(tab)}
@@ -720,6 +829,31 @@ const App: React.FC = () => {
             {activeTab === 'adjust' && <AdjustmentPanel onApplyAdjustment={handleApplyAdjustment} isLoading={isLoading} manualAdjustments={manualAdjustments} onManualAdjustmentsChange={setManualAdjustments} />}
             {activeTab === 'filters' && <FilterPanel onApplyFilter={handleApplyFilter} isLoading={isLoading} />}
             {activeTab === 'style' && <StyleTransferPanel onApplyStyle={handleApplyStyleTransfer} isLoading={isLoading} />}
+            {activeTab === 'mask' && (
+                <MaskPanel
+                    history={history}
+                    historyIndex={historyIndex}
+                    brushSourceIndex={brushSourceIndex}
+                    onBrushSourceIndexChange={setBrushSourceIndex}
+                    brushSize={brushSize}
+                    onBrushSizeChange={setBrushSize}
+                    brushHardness={brushHardness}
+                    onBrushHardnessChange={setBrushHardness}
+                    brushMode={brushMode}
+                    onBrushModeChange={setBrushMode}
+                    onApply={handleApplyMask}
+                    onReset={() => {
+                        setDrawnMaskDataUrl(null);
+                        setMaskResetTrigger(t => t + 1);
+                    }}
+                    isLoading={isLoading}
+                    canApply={!!drawnMaskDataUrl}
+                    onUndoStroke={handleUndoMaskStroke}
+                    canUndoStroke={canUndoMaskStroke}
+                    onRedoStroke={handleRedoMaskStroke}
+                    canRedoStroke={canRedoMaskStroke}
+                />
+            )}
         </div>
         
         <div className="flex flex-wrap items-center justify-center gap-2 mt-6">

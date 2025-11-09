@@ -258,3 +258,42 @@ export const generateStyleTransferImage = async (
     
     return handleApiResponse(response, 'style transfer');
 };
+
+/**
+ * Combines two images based on a mask.
+ * @param baseImage The base image (current state).
+ * @param sourceImage The source image to pull pixels from (previous state).
+ * @param maskImage A black and white image where white indicates areas to take from the source.
+ * @returns A promise that resolves to the data URL of the combined image.
+ */
+export const generateMaskedImage = async (
+    baseImage: File,
+    sourceImage: File,
+    maskImage: File
+): Promise<string> => {
+    console.log(`Starting history brush composition...`);
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+    
+    const baseImagePart = await fileToPart(baseImage);
+    const sourceImagePart = await fileToPart(sourceImage);
+    const maskImagePart = await fileToPart(maskImage);
+
+    const prompt = `You are an expert image composition AI. You will be provided with three images: a 'base image', a 'source image', and a 'mask image'. Your task is to create a new image by combining the base and source images according to the mask.
+- Where the mask image is white, you must use the pixels from the 'source image'.
+- Where the mask image is black, you must use the pixels from the 'base image'.
+- It is crucial that you create a seamless and photorealistic blend along the edges of the masked area.
+- The final output must have the same dimensions as the input images.
+- Do not add any new content or change the overall style. Only perform the composition as described.
+Output: Return ONLY the final composed image. Do not return text.`;
+        
+    const textPart = { text: prompt };
+
+    console.log('Sending base, source, mask, and prompt to the model...');
+    const response: GenerateContentResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: { parts: [textPart, { text: "Base Image:" }, baseImagePart, { text: "Source Image:" }, sourceImagePart, { text: "Mask Image:" }, maskImagePart] },
+    });
+    console.log('Received response from model for mask composition.', response);
+    
+    return handleApiResponse(response, 'mask composition');
+};

@@ -1,5 +1,10 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+*/
 
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
+import { checkBudgetAvailability, trackUsage } from "./budgetService";
 
 // Helper function to convert a File object to a Gemini API Part
 const fileToPart = async (file: File): Promise<{ inlineData: { mimeType: string; data: string; } }> => {
@@ -71,6 +76,9 @@ export const generateEditedImage = async (
     userPrompt: string,
     hotspot: { x: number, y: number }
 ): Promise<string> => {
+    // Check budget before starting
+    checkBudgetAvailability('EDIT');
+    
     console.log('Starting generative edit at:', hotspot);
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
     
@@ -97,7 +105,11 @@ Output: Return ONLY the final edited image. Do not return text.`;
     });
     console.log('Received response from model.', response);
 
-    return handleApiResponse(response, 'edit');
+    const result = handleApiResponse(response, 'edit');
+    
+    // Track usage only if successful
+    trackUsage('EDIT');
+    return result;
 };
 
 /**
@@ -112,6 +124,8 @@ export const generateFilteredImage = async (
     filterPrompt: string,
     isAdaptive: boolean = false,
 ): Promise<string> => {
+    checkBudgetAvailability('FILTER');
+
     console.log(`Starting filter generation: ${filterPrompt} (Adaptive: ${isAdaptive})`);
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
     
@@ -154,7 +168,9 @@ Output: Return ONLY the final filtered image. Do not return text.`;
     });
     console.log('Received response from model for filter.', response);
     
-    return handleApiResponse(response, 'filter');
+    const result = handleApiResponse(response, 'filter');
+    trackUsage('FILTER');
+    return result;
 };
 
 /**
@@ -169,6 +185,8 @@ export const generateAdjustedImage = async (
     adjustmentPrompt: string,
     isAdaptive: boolean = false,
 ): Promise<string> => {
+    checkBudgetAvailability('ADJUSTMENT');
+
     console.log(`Starting global adjustment generation: ${adjustmentPrompt} (Adaptive: ${isAdaptive})`);
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
     
@@ -216,7 +234,9 @@ Output: Return ONLY the final adjusted image. Do not return text.`;
     });
     console.log('Received response from model for adjustment.', response);
     
-    return handleApiResponse(response, 'adjustment');
+    const result = handleApiResponse(response, 'adjustment');
+    trackUsage('ADJUSTMENT');
+    return result;
 };
 
 /**
@@ -231,6 +251,8 @@ export const generateStyleTransferImage = async (
     styleImage: File,
     userPrompt: string,
 ): Promise<string> => {
+    checkBudgetAvailability('STYLE_TRANSFER');
+
     console.log(`Starting style transfer...`);
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
     
@@ -252,7 +274,9 @@ export const generateStyleTransferImage = async (
     });
     console.log('Received response from model for style transfer.', response);
     
-    return handleApiResponse(response, 'style transfer');
+    const result = handleApiResponse(response, 'style transfer');
+    trackUsage('STYLE_TRANSFER');
+    return result;
 };
 
 /**
@@ -267,6 +291,8 @@ export const generateMaskedImage = async (
     sourceImage: File,
     maskImage: File
 ): Promise<string> => {
+    checkBudgetAvailability('MASK_COMPOSITION');
+
     console.log(`Starting history brush composition...`);
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
     
@@ -291,5 +317,7 @@ Output: Return ONLY the final composed image. Do not return text.`;
     });
     console.log('Received response from model for mask composition.', response);
     
-    return handleApiResponse(response, 'mask composition');
+    const result = handleApiResponse(response, 'mask composition');
+    trackUsage('MASK_COMPOSITION');
+    return result;
 };

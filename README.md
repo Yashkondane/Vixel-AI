@@ -1,10 +1,10 @@
-# Vixel Ai 🎨✨
+# Vixel Ai 
 
 **Vixel Ai** is a professional-grade, browser-native generative image editing suite. Built with **React 19**, **TypeScript**, and powered by **Google Gemini 2.5 Flash**, it enables complex AI-driven transformations—from localized "Point-and-Edit" retouching to high-volume batch processing—all without a server-side backend.
 
 ---
 
-## 🌟 Key Features
+## Key Features
 
 ### 1. Point-and-Edit (Localized Retouching)
 Navigate your image and click any specific coordinate to anchor an edit. Vixel uses coordinate-aware prompting to tell the AI exactly where to apply changes (e.g., "change the color of this flower to blue"), ensuring high precision without manual masking.
@@ -31,7 +31,7 @@ Process dozens of images at once with AI filters or global adjustments.
 
 ---
 
-## 🛡️ Production & Budget Safety
+## Production & Budget Safety
 
 Vixel Ai includes a built-in **Budget Protection Service** to ensure API costs remain predictable during production testing:
 - **₹200 Monthly Cap:** Automatically blocks API calls if the estimated monthly spend hits the threshold.
@@ -40,7 +40,7 @@ Vixel Ai includes a built-in **Budget Protection Service** to ensure API costs r
 
 ---
 
-## 🛠️ Technical Stack
+## Technical Stack
 
 - **Frontend:** React 19, TypeScript, Tailwind CSS
 - **AI Engine:** Google Gemini 2.5 Flash (via `@google/genai`)
@@ -50,7 +50,7 @@ Vixel Ai includes a built-in **Budget Protection Service** to ensure API costs r
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 1. **Environment Variable:** Ensure `process.env.API_KEY` is set to your Google Gemini API key.
 2. **Installation:** Use the provided `importmap` in `index.html` to load dependencies via ESM.
@@ -61,5 +61,3 @@ Vixel Ai includes a built-in **Budget Protection Service** to ensure API costs r
 
 ---
 
-## 📜 License
-Apache-2.0 - Developed for high-performance generative AI experimentation.

@@ -1,23 +1,28 @@
-import path from 'path';
+
 import { defineConfig, loadEnv } from 'vite';
-import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
-    const env = loadEnv(mode, '.', '');
-    return {
-      server: {
-        port: 3000,
-        host: '0.0.0.0',
-      },
-      plugins: [react()],
-      define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
-      },
-      resolve: {
-        alias: {
-          '@': path.resolve(__dirname, '.'),
-        }
+  // Load environment variables from the current directory.
+  // Using an empty string as the third argument allows loading variables without the VITE_ prefix if needed,
+  // but we prioritize VITE_GEMINI_API_KEY for standard Vite practice.
+  const env = loadEnv(mode, process.cwd(), '');
+  
+  const apiKey = env.VITE_GEMINI_API_KEY || env.API_KEY || '';
+
+  return {
+    define: {
+      // 1. Direct replacement of the string 'process.env.API_KEY'
+      'process.env.API_KEY': JSON.stringify(apiKey),
+      
+      // 2. Provision of a global process.env object to avoid 'process is not defined' errors
+      'process.env': {
+        API_KEY: JSON.stringify(apiKey)
       }
-    };
+    },
+    server: {
+      port: 5173,
+      strictPort: true,
+      host: true // Allow access via network if needed
+    }
+  };
 });

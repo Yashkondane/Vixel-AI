@@ -1,5 +1,8 @@
 
+
 import { defineConfig, loadEnv } from 'vite';
+// Fix: Import process from node:process to resolve TypeScript type errors for cwd() in Node.js environment
+import process from 'node:process';
 
 export default defineConfig(({ mode }) => {
   // Load environment variables from the current directory.

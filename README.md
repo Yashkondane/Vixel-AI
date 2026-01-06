@@ -1,10 +1,10 @@
-# Vixel Ai 🎨✨
+# Vixel Ai
 
-**Vixel Ai** is a professional-grade image editing suite. This version features a **Golang Backend** for enhanced security and performance.
+**Vixel Ai** is a professional-grade image editing suite. This version features a **Golang Backend** for enhanced security and performance, and is curently under devlopment. 
 
 ---
 
-## 🚀 Local Setup
+## Local Setup
 
 ### 1. Start the Backend (Golang)
 1.  Open a terminal in the project root.
@@ -38,6 +38,3 @@
 Usage is tracked in `localStorage` with a ₹200 monthly cap to ensure cost predictability.
 
 ---
-
-## 📜 License
-Apache-2.0
